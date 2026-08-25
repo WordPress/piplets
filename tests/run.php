@@ -2593,6 +2593,31 @@ PHP,
             assert(sessionStorage.getItem(migratedRecovery.key) === null,
                 'saving the migrated recovery left its random record behind');
 
+            document.getElementById('new-button').click();
+            await until(() => document.getElementById('piplet-composer'), 'the backlink composer did not open');
+            input(document.getElementById('edit-title'), 'Backlink source');
+            input(document.getElementById('edit-body'),
+                'points at [[Hello, piplet|welcome]], quotes `[[One browser save|one-browser-save]]`, and names [[missing|nowhere]] plus [[Self|backlink-source]]');
+            document.querySelector('.editor form').requestSubmit();
+            await until(() => document.getElementById('piplet-note-backlink-source'),
+                'the backlink source note did not save');
+            assert(!document.getElementById('piplet-note-backlink-source').querySelector('.note-backlinks'),
+                'a self-link produced a backlinks row');
+            (await findLibraryItem('One browser save')).click();
+            await until(() => document.getElementById('piplet-note-one-browser-save'),
+                'the code-quoted note did not open for the backlink check');
+            assert(!document.getElementById('piplet-note-one-browser-save').querySelector('.note-backlinks'),
+                'a wiki link inside inline code produced a backlink');
+            (await findLibraryItem('Hello, piplet')).click();
+            await until(() => document.querySelector('#piplet-note-welcome .note-backlinks'),
+                'welcome did not show its backlinks row');
+            const backlinkAnchors = [...document.querySelectorAll('#piplet-note-welcome .note-backlinks a')];
+            assert(backlinkAnchors.length === 1 && backlinkAnchors[0].textContent === 'Backlink source',
+                'the backlinks row did not list exactly the one linking note');
+            backlinkAnchors[0].click();
+            await until(() => document.querySelector('#story > article')?.id === 'piplet-note-backlink-source',
+                'a backlink click did not open its linking note');
+            input(document.getElementById('search-input'), '');
 
             document.getElementById('new-button').click();
             await until(() => document.getElementById('piplet-composer'), 'the slug-collision note composer did not open');
@@ -3469,6 +3494,10 @@ PHP;
             check(str_contains($httpSource, 'return renderPlainBody(body, preview);'), 'The bounded-renderer fallback is missing.');
             check(str_contains($httpSource, 'recoverReadOnlyDraft'), 'The read-only draft recovery guard is missing.');
             check(str_contains($httpSource, 'const maxOpenNotes = 20;') && str_contains($httpSource, 'const maxLibraryNotes = 40;'), 'The aggregate rendering guards are missing.');
+            check(str_contains($httpSource, "element('nav', 'note-backlinks')")
+                && str_contains($httpSource, "'Linked from'")
+                && str_contains($httpSource, 'id !== source.id'),
+                'The backlinks row or its self-link guard is missing.');
             check(str_contains($httpSource, '`${draftPrefix}v2:${source.draftId}`')
                 && str_contains($httpSource, "typeof expectedRaw === 'string' && raw !== expectedRaw")
                 && str_contains($httpSource, 'stored?.draftId !== draftId')

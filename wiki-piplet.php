@@ -1791,6 +1791,11 @@ function piplet_run(): void
             .note-meta { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .7rem; margin: -.45rem 0 var(--space-5); color: var(--faint); font-size: .75rem; }
             .tag { display: inline-flex; align-items: center; min-height: 1.55rem; padding: .18rem .48rem; border-radius: 999px; background: var(--accent-wash); color: var(--accent); font-size: .72rem; font-weight: 650; }
             button.tag:hover { text-decoration: underline; }
+            .note-backlinks { display: flex; flex-wrap: wrap; align-items: baseline; gap: .35rem .7rem; margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--line); font-size: .82rem; font-family: var(--font-ui); }
+            .backlinks-label { color: var(--faint); font-size: .7rem; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
+            .note-backlinks a { color: var(--accent); text-decoration: none; }
+            .note-backlinks a:hover, .note-backlinks a:focus-visible { text-decoration: underline; }
+            .backlinks-more { color: var(--faint); }
             .prose { min-width: 0; max-width: var(--measure); overflow-wrap: break-word; color: var(--ink); font-family: var(--font-copy); font-size: var(--copy-size); line-height: 1.72; }
             .prose > * + * { margin-top: 1.05em; }
             .prose h3, .prose h4, .prose h5 { margin-top: 1.55em; font-weight: 650; line-height: 1.2; letter-spacing: -.02em; }
@@ -2527,7 +2532,52 @@ function piplet_run(): void
             return button;
         }
 
-        function renderNote(note, storyBudget) {
+        function collectLineWikiTargets(text, targets) {
+            let cursor = 0;
+            const nextOpener = /\[\[|\*\*|`/g;
+            while (cursor < text.length) {
+                nextOpener.lastIndex = cursor;
+                const match = nextOpener.exec(text);
+                if (!match) return;
+                const start = match.index;
+                const kind = match[0] === '[[' ? 'wiki' : match[0] === '**' ? 'strong' : 'code';
+                const opener = kind === 'code' ? '`' : kind === 'wiki' ? '[[' : '**';
+                const closer = kind === 'code' ? '`' : kind === 'wiki' ? ']]' : '**';
+                const end = text.indexOf(closer, start + opener.length);
+                if (end < 0 || end === start + opener.length || (kind === 'wiki' && text.slice(start + 2, end).includes(']'))) return;
+                if (kind === 'wiki') {
+                    const inside = text.slice(start + opener.length, end);
+                    const divider = inside.indexOf('|');
+                    targets.add((divider < 0 ? inside : inside.slice(divider + 1)).trim());
+                }
+                cursor = end + closer.length;
+            }
+        }
+
+        function backlinkIndex() {
+            const index = new Map();
+            for (const source of sortedNotes()) {
+                const targets = new Set();
+                const lines = source.body.replace(/\r\n?/g, '\n').split('\n');
+                let fenced = false;
+                for (const line of lines) {
+                    if (line.startsWith('```')) { fenced = !fenced; continue; }
+                    if (!fenced) collectLineWikiTargets(line, targets);
+                }
+                const resolved = new Set();
+                for (const target of targets) {
+                    const id = resolveNote(target);
+                    if (id && id !== source.id) resolved.add(id);
+                }
+                for (const id of resolved) {
+                    if (!index.has(id)) index.set(id, []);
+                    index.get(id).push(source);
+                }
+            }
+            return index;
+        }
+
+        function renderNote(note, storyBudget, backlinks) {
             const article = element('article', 'note');
             article.id = `piplet-note-${note.id}`;
             const header = element('header', 'note-header');
@@ -2543,6 +2593,21 @@ function piplet_run(): void
             meta.append(element('span', '', `Edited ${shortDate(note.updated)}`));
             note.tags.forEach(tag => meta.append(tagButton(tag)));
             article.append(meta, renderProse(note.body, false, storyBudget));
+
+            const linking = backlinks?.get(note.id) || [];
+            if (linking.length) {
+                const row = element('nav', 'note-backlinks');
+                row.setAttribute('aria-label', 'Notes that link here');
+                row.append(element('span', 'backlinks-label', 'Linked from'));
+                for (const source of linking.slice(0, 20)) {
+                    const link = element('a', '', source.title || source.id);
+                    link.href = `#${encodeURIComponent(source.id)}`;
+                    link.dataset.wiki = source.id;
+                    row.append(link);
+                }
+                if (linking.length > 20) row.append(element('span', 'backlinks-more', `and ${linking.length - 20} more`));
+                article.append(row);
+            }
 
             if (pendingDelete?.id === note.id) {
                 const row = element('div', 'delete-row');
@@ -3397,13 +3462,14 @@ function piplet_run(): void
         function renderStory() {
             els.story.replaceChildren();
             const storyBudget = {characters: 0, nodes: 0, maxCharacters: 256 * 1024, maxNodes: 4000};
+            const backlinks = backlinkIndex();
             if (editing?.readOnlyRecovery) els.story.append(renderReadOnlyRecovery());
             else if (editing?.id === null) els.story.append(renderEditor());
             else if (editing && !notes.has(editing.id)) els.story.append(renderEditor());
             for (const id of openNotes) {
                 const note = notes.get(id);
                 if (!note) continue;
-                els.story.append(!editing?.readOnlyRecovery && editing?.id === id ? renderEditor() : renderNote(note, storyBudget));
+                els.story.append(!editing?.readOnlyRecovery && editing?.id === id ? renderEditor() : renderNote(note, storyBudget, backlinks));
             }
             if (!els.story.childNodes.length) {
                 const empty = element('section', 'empty-story');
